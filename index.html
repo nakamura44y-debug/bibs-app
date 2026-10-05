@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>リアルタイム ビブス管理アプリ</title>
+  <!-- Tailwind CSS (デザイン用) -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Firebase SDK (リアルタイム同期用) -->
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+</head>
+<body class="bg-slate-100 min-h-screen p-4 text-slate-800">
+  <div class="max-w-4xl mx-auto space-y-6">
+    
+    <!-- ヘッダー -->
+    <header class="flex flex-col sm:flex-row justify-between items-center bg-white p-4 rounded-xl shadow-sm gap-4">
+      <div>
+        <h1 class="text-2xl font-bold text-slate-800">🎽 ビブス管理アプリ</h1>
+        <p class="text-xs text-slate-500 mt-1">リアルタイムで割り当て状況が同期されます</p>
+      </div>
+      <button id="copyUrlBtn" onclick="copyShareUrl()" class="w-full sm:w-auto bg-indigo-600 hover:bg-indigo-700 text-white font-medium px-4 py-2 rounded-lg text-sm flex items-center justify-center gap-2 transition">
+        <span>🔗 共有URLをコピー</span>
+      </button>
+    </header>
+
+    <!-- メンバー追加・選択エリア -->
+    <section class="bg-white p-4 rounded-xl shadow-sm space-y-3">
+      <h2 class="font-bold text-sm text-slate-600">1. メンバーを追加・選択する</h2>
+      <div class="flex gap-2">
+        <input type="text" id="memberName" placeholder="メンバー名を入力" class="flex-1 border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+        <button onclick="addMember()" class="bg-slate-800 hover:bg-slate-900 text-white font-medium px-4 py-2 rounded-lg text-sm transition">追加</button>
+      </div>
+      <div id="memberList" class="flex flex-wrap gap-2 pt-2">
+        <!-- メンバー一覧がここに表示されます -->
+      </div>
+    </section>
+
+    <!-- ビブス一覧エリア -->
+    <section class="bg-white p-4 rounded-xl shadow-sm space-y-3">
+      <div class="flex justify-between items-center">
+        <h2 class="font-bold text-sm text-slate-600">2. タップして割り当てる</h2>
+        <button onclick="resetBibs()" class="text-xs text-red-500 hover:underline">全割り当て解除</button>
+      </div>
+      <div id="bibGrid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+        <!-- ビブス枠がここに表示されます -->
+      </div>
+    </section>
+
+  </div>
+
+  <script>
+    // ⚠️ ご自身のFirebaseコンソールの設定情報と差し替えてください
+    const firebaseConfig = {
+      apiKey: "YOUR_API_KEY",
+      authDomain: "alshine-bibs-management-app.firebaseapp.com",
+      projectId: "alshine-bibs-management-app",
+      storageBucket: "alshine-bibs-management-app.appspot.com",
+      messagingSenderId: "YOUR_SENDER_ID",
+      appId: "YOUR_APP_ID"
+    };
+
+    // Firebase 初期化
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.firestore();
+    const docRef = db.collection("bibsApp").doc("state");
+
+    let selectedMember = null;
+    let state = {
+      members: ["選手A", "選手B", "選手C", "選手D"],
+      assignments: {}
+    };
+
+    // リアルタイム受信設定
+    docRef.onSnapshot((doc) => {
+      if (doc.exists) {
+        state = doc.data();
+        render();
+      } else {
+        saveState(state);
+      }
+    });
+
+    function saveState(newState) {
+      docRef.set(newState, { merge: true });
+    }
+
+    function render() {
+      // メンバー表示
+      const memberListEl = document.getElementById("memberList");
+      memberListEl.innerHTML = "";
+      (state.members || []).forEach(m => {
+        const isAssigned = Object.values(state.assignments || {}).includes(m);
+        const isSelected = selectedMember === m;
+        
+        const btn = document.createElement("button");
+        btn.className = `px-3 py-1.5 rounded-full text-xs font-medium border transition ${
+          isSelected 
+            ? "bg-indigo-600 text-white border-indigo-600 shadow" 
+            : isAssigned 
+              ? "bg-slate-100 text-slate-400 border-slate-200" 
+              : "bg-white text-slate-700 border-slate-300 hover:bg-slate-50"
+        }`;
+        btn.textContent = m + (isAssigned ? " (割当済)" : "");
+        btn.onclick = () => selectMember(m);
+        memberListEl.appendChild(btn);
+      });
+
+      // ビブス枠表示 (1〜12番)
+      const bibGridEl = document.getElementById("bibGrid");
+      bibGridEl.innerHTML = "";
+      for (let i = 1; i <= 12; i++) {
+        const assignedName = state.assignments ? state.assignments[i] : null;
+        const card = document.createElement("div");
+        card.className = `border-2 rounded-xl p-3 text-center flex flex-col justify-between h-24 cursor-pointer transition ${
+          assignedName 
+            ? "border-indigo-500 bg-indigo-50/50" 
+            : "border-dashed border-slate-300 hover:border-indigo-300 bg-white"
+        }`;
+        
+        card.innerHTML = `
+          <div class="flex justify-between items-center">
+            <span class="text-xs font-bold text-slate-400">No.</span>
+            <span class="text-lg font-black ${assignedName ? 'text-indigo-600' : 'text-slate-400'}">${i}</span>
+          </div>
+          <div class="text-sm font-bold truncate my-auto ${assignedName ? 'text-slate-800' : 'text-slate-300'}">
+            ${assignedName || '未割り当て'}
+          </div>
+          ${assignedName 
+            ? `<button onclick="event.stopPropagation(); unassignBib(${i})" class="text-[10px] text-red-500 hover:underline">解除</button>` 
+            : '<span class="text-[10px] text-indigo-500">タップして割当</span>'}
+        `;
+
+        card.onclick = () => assignBib(i);
+        bibGridEl.appendChild(card);
+      }
+    }
+
+    function selectMember(name) {
+      selectedMember = selectedMember === name ? null : name;
+      render();
+    }
+
+    function addMember() {
+      const input = document.getElementById("memberName");
+      const name = input.value.trim();
+      if (!name) return;
+      if (!state.members) state.members = [];
+      if (!state.members.includes(name)) {
+        state.members.push(name);
+        saveState(state);
+      }
+      input.value = "";
+    }
+
+    function assignBib(bibNum) {
+      if (!selectedMember) {
+        alert("先に上のメンバー一覧から割り当てたい人を選択してください");
+        return;
+      }
+      if (!state.assignments) state.assignments = {};
+      
+      // 他のビブスから外す
+      Object.keys(state.assignments).forEach(k => {
+        if (state.assignments[k] === selectedMember) delete state.assignments[k];
+      });
+
+      state.assignments[bibNum] = selectedMember;
+      selectedMember = null;
+      saveState(state);
+    }
+
+    function unassignBib(bibNum) {
+      if (state.assignments && state.assignments[bibNum]) {
+        delete state.assignments[bibNum];
+        saveState(state);
+      }
+    }
+
+    function resetBibs() {
+      if (confirm("すべてのビブス割り当てをリセットしますか？")) {
+        state.assignments = {};
+        saveState(state);
+      }
+    }
+
+    function copyShareUrl() {
+      navigator.clipboard.writeText(window.location.href).then(() => {
+        alert("共有URLをコピーしました！このURLを他の方へ共有してください。");
+      });
+    }
+  </script>
+</body>
+</html>
