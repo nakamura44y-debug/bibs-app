@@ -4,9 +4,9 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>リアルタイム ビブス管理アプリ</title>
-  <!-- Tailwind CSS (デザイン用) -->
+  <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
-  <!-- Firebase SDK (リアルタイム同期用) -->
+  <!-- Firebase SDK -->
   <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
 </head>
@@ -26,7 +26,7 @@
 
     <!-- メンバー追加・選択エリア -->
     <section class="bg-white p-4 rounded-xl shadow-sm space-y-3">
-      <h2 class="font-bold text-sm text-slate-600">1. メンバーを追加・選択する</h2>
+      <h2 class="font-bold text-sm text-slate-600">1. メンバー追加・選択（名前タップで選択／✏️編集／🗑️削除）</h2>
       <div class="flex gap-2">
         <input type="text" id="memberName" placeholder="メンバー名を入力" class="flex-1 border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
         <button onclick="addMember()" class="bg-slate-800 hover:bg-slate-900 text-white font-medium px-4 py-2 rounded-lg text-sm transition">追加</button>
@@ -93,17 +93,34 @@
         const isAssigned = Object.values(state.assignments || {}).includes(m);
         const isSelected = selectedMember === m;
         
-        const btn = document.createElement("button");
-        btn.className = `px-3 py-1.5 rounded-full text-xs font-medium border transition ${
+        const wrapper = document.createElement("div");
+        wrapper.className = `inline-flex items-center gap-1 border rounded-full px-3 py-1 text-xs shadow-sm transition ${
           isSelected 
-            ? "bg-indigo-600 text-white border-indigo-600 shadow" 
-            : isAssigned 
-              ? "bg-slate-100 text-slate-400 border-slate-200" 
-              : "bg-white text-slate-700 border-slate-300 hover:bg-slate-50"
+            ? "border-indigo-600 bg-indigo-50 font-bold" 
+            : "bg-white border-slate-300"
         }`;
-        btn.textContent = m + (isAssigned ? " (割当済)" : "");
-        btn.onclick = () => selectMember(m);
-        memberListEl.appendChild(btn);
+
+        const nameBtn = document.createElement("button");
+        nameBtn.className = `${isSelected ? 'text-indigo-600' : isAssigned ? 'text-slate-400' : 'text-slate-700'}`;
+        nameBtn.textContent = m + (isAssigned ? " (割当済)" : "");
+        nameBtn.onclick = () => selectMember(m);
+
+        const editBtn = document.createElement("button");
+        editBtn.className = "text-slate-400 hover:text-indigo-600 ml-1";
+        editBtn.innerHTML = "✏️";
+        editBtn.title = "名前を編集";
+        editBtn.onclick = (e) => { e.stopPropagation(); editMember(m); };
+
+        const deleteBtn = document.createElement("button");
+        deleteBtn.className = "text-slate-400 hover:text-red-600 ml-0.5";
+        deleteBtn.innerHTML = "🗑️";
+        deleteBtn.title = "削除";
+        deleteBtn.onclick = (e) => { e.stopPropagation(); deleteMember(m); };
+
+        wrapper.appendChild(nameBtn);
+        wrapper.appendChild(editBtn);
+        wrapper.appendChild(deleteBtn);
+        memberListEl.appendChild(wrapper);
       });
 
       // ビブス枠表示 (1〜12番)
@@ -151,6 +168,49 @@
         saveState(state);
       }
       input.value = "";
+    }
+
+    function editMember(oldName) {
+      const newName = prompt(`「${oldName}」の新しい名前を入力してください:`, oldName);
+      if (!newName || newName.trim() === "" || newName === oldName) return;
+      const trimmed = newName.trim();
+
+      // メンバーリストの置換
+      const index = state.members.indexOf(oldName);
+      if (index !== -1) {
+        state.members[index] = trimmed;
+      }
+
+      // ビブス割り当て名の置換
+      if (state.assignments) {
+        Object.keys(state.assignments).forEach(k => {
+          if (state.assignments[k] === oldName) {
+            state.assignments[k] = trimmed;
+          }
+        });
+      }
+
+      if (selectedMember === oldName) selectedMember = trimmed;
+      saveState(state);
+    }
+
+    function deleteMember(name) {
+      if (!confirm(`「${name}」をメンバーから削除しますか？`)) return;
+
+      // メンバーリストから削除
+      state.members = (state.members || []).filter(m => m !== name);
+
+      // ビブス割り当て解除
+      if (state.assignments) {
+        Object.keys(state.assignments).forEach(k => {
+          if (state.assignments[k] === name) {
+            delete state.assignments[k];
+          }
+        });
+      }
+
+      if (selectedMember === name) selectedMember = null;
+      saveState(state);
     }
 
     function assignBib(bibNum) {
