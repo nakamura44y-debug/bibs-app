@@ -97,8 +97,9 @@
       }
     });
 
+    // データを完全に最新状態で上書き保存（個別削除を正しく反映）
     function saveState(newState) {
-      docRef.set(newState, { merge: true });
+      docRef.set(newState);
     }
 
     function render() {
@@ -112,7 +113,6 @@
       const memberListEl = document.getElementById("memberList");
       memberListEl.innerHTML = "";
       (state.members || []).forEach(m => {
-        // 割り当てられているビブス番号を検索
         let assignedBibNum = null;
         if (state.assignments) {
           for (const [bib, member] of Object.entries(state.assignments)) {
@@ -141,7 +141,7 @@
 
         wrapper.appendChild(nameBtn);
 
-        // 割当中の場合はメンバー欄からも個別解除できるボタンを表示
+        // 割当中の場合はメンバー欄からも個別解除
         if (assignedBibNum) {
           const unassignMemberBtn = document.createElement("button");
           unassignMemberBtn.className = "text-red-500 hover:text-red-700 ml-1 font-bold";
@@ -157,7 +157,7 @@
         // 編集ボタン
         const editBtn = document.createElement("button");
         editBtn.className = "text-slate-400 hover:text-indigo-600 ml-1";
-        editBtn.innerHTML = "✏️️";
+        editBtn.innerHTML = "✏️";
         editBtn.title = "名前を編集";
         editBtn.onclick = (e) => { e.stopPropagation(); editMember(m); };
         wrapper.appendChild(editBtn);
@@ -179,7 +179,8 @@
       const totalBibs = state.bibCount || 12;
 
       for (let i = 1; i <= totalBibs; i++) {
-        const assignedName = state.assignments ? state.assignments[i] : null;
+        const key = String(i);
+        const assignedName = state.assignments ? state.assignments[key] : null;
         const card = document.createElement("div");
         card.className = `border-2 rounded-xl p-3 text-center flex flex-col justify-between min-h-[100px] transition ${
           assignedName 
@@ -288,14 +289,16 @@
         if (state.assignments[k] === selectedMember) delete state.assignments[k];
       });
 
-      state.assignments[bibNum] = selectedMember;
+      state.assignments[String(bibNum)] = selectedMember;
       selectedMember = null;
       saveState(state);
     }
 
+    // 特定のビブス指定解除（確実に1名分のみ削除）
     function unassignBib(bibNum) {
-      if (state.assignments && state.assignments[bibNum]) {
-        delete state.assignments[bibNum];
+      if (state.assignments) {
+        const key = String(bibNum);
+        delete state.assignments[key];
         saveState(state);
       }
     }
