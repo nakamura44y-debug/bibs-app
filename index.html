@@ -19,9 +19,15 @@
         <h1 class="text-2xl font-bold text-slate-800">🎽 ビブス管理アプリ</h1>
         <p class="text-xs text-slate-500 mt-1">リアルタイムで割り当て状況が同期されます</p>
       </div>
-      <button id="copyUrlBtn" onclick="copyShareUrl()" class="w-full sm:w-auto bg-indigo-600 hover:bg-indigo-700 text-white font-medium px-4 py-2 rounded-lg text-sm flex items-center justify-center gap-2 transition">
-        <span>🔗 共有URLをコピー</span>
-      </button>
+      <div class="flex items-center gap-2 w-full sm:w-auto">
+        <!-- 元に戻す（Undo）ボタン -->
+        <button id="undoBtn" onclick="undo()" disabled class="flex-1 sm:flex-none bg-slate-200 text-slate-400 font-medium px-3 py-2 rounded-lg text-sm flex items-center justify-center gap-1 transition cursor-not-allowed">
+          <span>↩️ 元に戻す</span>
+        </button>
+        <button id="copyUrlBtn" onclick="copyShareUrl()" class="flex-1 sm:flex-none bg-indigo-600 hover:bg-indigo-700 text-white font-medium px-4 py-2 rounded-lg text-sm flex items-center justify-center gap-2 transition">
+          <span>🔗 共有URLをコピー</span>
+        </button>
+      </div>
     </header>
 
     <!-- メンバー追加・選択エリア -->
@@ -76,6 +82,8 @@
     const docRef = db.collection("bibsApp").doc("state");
 
     let selectedMember = null;
+    let historyStack = []; // 元に戻す用の履歴スタック
+
     let state = {
       members: ["選手A", "選手B", "選手C", "選手D"],
       assignments: {},
@@ -93,16 +101,44 @@
         };
         render();
       } else {
-        saveState(state);
+        saveState(state, false);
       }
     });
 
-    // データを完全に最新状態で上書き保存（個別削除を正しく反映）
-    function saveState(newState) {
+    // 状態の保存（recordHistoryがtrueの場合は直前の状態を履歴に追加）
+    function saveState(newState, recordHistory = true) {
+      if (recordHistory) {
+        // 現在の状態のディープコピーを履歴に追加
+        historyStack.push(JSON.parse(JSON.stringify(state)));
+        if (historyStack.length > 20) historyStack.shift(); // 履歴は最大20件まで保持
+      }
       docRef.set(newState);
+      updateUndoButtonState();
+    }
+
+    // 元に戻す（1つ前の状態に復元）
+    function undo() {
+      if (historyStack.length === 0) return;
+      const previousState = historyStack.pop();
+      docRef.set(previousState);
+      updateUndoButtonState();
+    }
+
+    function updateUndoButtonState() {
+      const undoBtn = document.getElementById("undoBtn");
+      if (!undoBtn) return;
+      if (historyStack.length > 0) {
+        undoBtn.disabled = false;
+        undoBtn.className = "flex-1 sm:flex-none bg-amber-500 hover:bg-amber-600 text-white font-medium px-3 py-2 rounded-lg text-sm flex items-center justify-center gap-1 transition shadow-sm cursor-pointer";
+      } else {
+        undoBtn.disabled = true;
+        undoBtn.className = "flex-1 sm:flex-none bg-slate-200 text-slate-400 font-medium px-3 py-2 rounded-lg text-sm flex items-center justify-center gap-1 transition cursor-not-allowed";
+      }
     }
 
     function render() {
+      updateUndoButtonState();
+
       // 枚数入力欄の表示更新
       const bibCountInput = document.getElementById("bibCountInput");
       if (document.activeElement !== bibCountInput) {
@@ -232,8 +268,9 @@
       if (!name) return;
       if (!state.members) state.members = [];
       if (!state.members.includes(name)) {
-        state.members.push(name);
-        saveState(state);
+        const nextState = JSON.parse(JSON.stringify(state));
+        nextState.members.push(name);
+        saveState(nextState, true);
       }
       input.value = "";
     }
@@ -243,38 +280,41 @@
       if (!newName || newName.trim() === "" || newName === oldName) return;
       const trimmed = newName.trim();
 
-      const index = state.members.indexOf(oldName);
+      const nextState = JSON.parse(JSON.stringify(state));
+
+      const index = nextState.members.indexOf(oldName);
       if (index !== -1) {
-        state.members[index] = trimmed;
+        nextState.members[index] = trimmed;
       }
 
-      if (state.assignments) {
-        Object.keys(state.assignments).forEach(k => {
-          if (state.assignments[k] === oldName) {
-            state.assignments[k] = trimmed;
+      if (nextState.assignments) {
+        Object.keys(nextState.assignments).forEach(k => {
+          if (nextState.assignments[k] === oldName) {
+            nextState.assignments[k] = trimmed;
           }
         });
       }
 
       if (selectedMember === oldName) selectedMember = trimmed;
-      saveState(state);
+      saveState(nextState, true);
     }
 
     function deleteMember(name) {
       if (!confirm(`「${name}」をメンバーから削除しますか？`)) return;
 
-      state.members = (state.members || []).filter(m => m !== name);
+      const nextState = JSON.parse(JSON.stringify(state));
+      nextState.members = (nextState.members || []).filter(m => m !== name);
 
-      if (state.assignments) {
-        Object.keys(state.assignments).forEach(k => {
-          if (state.assignments[k] === name) {
-            delete state.assignments[k];
+      if (nextState.assignments) {
+        Object.keys(nextState.assignments).forEach(k => {
+          if (nextState.assignments[k] === name) {
+            delete nextState.assignments[k];
           }
         });
       }
 
       if (selectedMember === name) selectedMember = null;
-      saveState(state);
+      saveState(nextState, true);
     }
 
     function assignBib(bibNum) {
@@ -282,31 +322,34 @@
         alert("先に上のメンバー一覧から割り当てたい人を選択してください");
         return;
       }
-      if (!state.assignments) state.assignments = {};
+      
+      const nextState = JSON.parse(JSON.stringify(state));
+      if (!nextState.assignments) nextState.assignments = {};
       
       // 他のビブスから外す
-      Object.keys(state.assignments).forEach(k => {
-        if (state.assignments[k] === selectedMember) delete state.assignments[k];
+      Object.keys(nextState.assignments).forEach(k => {
+        if (nextState.assignments[k] === selectedMember) delete nextState.assignments[k];
       });
 
-      state.assignments[String(bibNum)] = selectedMember;
+      nextState.assignments[String(bibNum)] = selectedMember;
       selectedMember = null;
-      saveState(state);
+      saveState(nextState, true);
     }
 
-    // 特定のビブス指定解除（確実に1名分のみ削除）
     function unassignBib(bibNum) {
       if (state.assignments) {
+        const nextState = JSON.parse(JSON.stringify(state));
         const key = String(bibNum);
-        delete state.assignments[key];
-        saveState(state);
+        delete nextState.assignments[key];
+        saveState(nextState, true);
       }
     }
 
     function resetBibs() {
       if (confirm("すべてのビブス割り当てをリセットしますか？")) {
-        state.assignments = {};
-        saveState(state);
+        const nextState = JSON.parse(JSON.stringify(state));
+        nextState.assignments = {};
+        saveState(nextState, true);
       }
     }
 
@@ -317,18 +360,20 @@
         alert("1以上の数値を入力してください");
         return;
       }
-      state.bibCount = count;
+
+      const nextState = JSON.parse(JSON.stringify(state));
+      nextState.bibCount = count;
       
       // 枚数を減らした場合、その範囲外の割り当てを解除
-      if (state.assignments) {
-        Object.keys(state.assignments).forEach(k => {
+      if (nextState.assignments) {
+        Object.keys(nextState.assignments).forEach(k => {
           if (parseInt(k, 10) > count) {
-            delete state.assignments[k];
+            delete nextState.assignments[k];
           }
         });
       }
       
-      saveState(state);
+      saveState(nextState, true);
     }
 
     function copyShareUrl() {
