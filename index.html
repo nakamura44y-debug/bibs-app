@@ -42,10 +42,27 @@
       </div>
     </section>
 
+    <!-- ビブス種類（カテゴリ）タブエリア -->
+    <section class="bg-white p-4 rounded-xl shadow-sm space-y-3">
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+        <h2 class="font-bold text-sm text-slate-600">2. ビブスの種類（チーム・用途）を選択</h2>
+        <div class="flex gap-2">
+          <input type="text" id="categoryNameInput" placeholder="新しい種類名(例: ビブスB)" class="border rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500">
+          <button onclick="addCategory()" class="bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium px-3 py-1 rounded text-xs transition">種類を追加</button>
+        </div>
+      </div>
+      <div id="categoryTabs" class="flex flex-wrap gap-2 pt-1 border-t pt-3">
+        <!-- タブボタンがここに並びます -->
+      </div>
+    </section>
+
     <!-- ビブス一覧エリア -->
     <section class="bg-white p-4 rounded-xl shadow-sm space-y-4">
       <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b pb-3">
-        <h2 class="font-bold text-sm text-slate-600">2. タップして割り当て・個別解除</h2>
+        <div class="flex items-center gap-2">
+          <h2 id="currentCategoryTitle" class="font-bold text-base text-indigo-600">FPチーム</h2>
+          <button onclick="deleteCurrentCategory()" class="text-xs text-slate-400 hover:text-red-600" title="この種類を削除">🗑️削除</button>
+        </div>
         
         <!-- ビブス枚数変更 & 全解除 -->
         <div class="flex items-center gap-3">
@@ -54,7 +71,7 @@
             <input type="number" id="bibCountInput" min="1" max="99" class="w-16 border rounded px-2 py-1 text-center font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500" value="12">
             <button onclick="updateBibCount()" class="bg-indigo-100 hover:bg-indigo-200 text-indigo-700 font-bold px-2.5 py-1 rounded transition text-xs">変更</button>
           </div>
-          <button onclick="resetBibs()" class="text-xs text-red-500 hover:text-red-700 underline font-medium ml-auto sm:ml-0">全解除</button>
+          <button onclick="resetBibs()" class="text-xs text-red-500 hover:text-red-700 underline font-medium ml-auto sm:ml-0">この種類を全解除</button>
         </div>
       </div>
 
@@ -82,12 +99,15 @@
     const docRef = db.collection("bibsApp").doc("state");
 
     let selectedMember = null;
-    let historyStack = []; // 元に戻す用の履歴スタック
+    let historyStack = []; // 履歴スタック
 
     let state = {
       members: ["選手A", "選手B", "選手C", "選手D"],
-      assignments: {},
-      bibCount: 12
+      categories: {
+        "FPチーム": { bibCount: 12, assignments: {} },
+        "GK用": { bibCount: 2, assignments: {} }
+      },
+      currentCategory: "FPチーム"
     };
 
     // リアルタイム受信設定
@@ -95,28 +115,29 @@
       if (doc.exists) {
         const data = doc.data();
         state = {
-          members: data.members || [],
-          assignments: data.assignments || {},
-          bibCount: data.bibCount || 12
+          members: data.members || ["選手A", "選手B", "選手C", "選手D"],
+          categories: data.categories || { "FPチーム": { bibCount: 12, assignments: {} } },
+          currentCategory: data.currentCategory || Object.keys(data.categories || { "FPチーム": {} })[0]
         };
+        // 万が一現在のカテゴリが存在しなくなっていた場合のフォールバック
+        if (!state.categories[state.currentCategory]) {
+          state.currentCategory = Object.keys(state.categories)[0];
+        }
         render();
       } else {
         saveState(state, false);
       }
     });
 
-    // 状態の保存（recordHistoryがtrueの場合は直前の状態を履歴に追加）
     function saveState(newState, recordHistory = true) {
       if (recordHistory) {
-        // 現在の状態のディープコピーを履歴に追加
         historyStack.push(JSON.parse(JSON.stringify(state)));
-        if (historyStack.length > 20) historyStack.shift(); // 履歴は最大20件まで保持
+        if (historyStack.length > 20) historyStack.shift();
       }
       docRef.set(newState);
       updateUndoButtonState();
     }
 
-    // 元に戻す（1つ前の状態に復元）
     function undo() {
       if (historyStack.length === 0) return;
       const previousState = historyStack.pop();
@@ -139,19 +160,42 @@
     function render() {
       updateUndoButtonState();
 
-      // 枚数入力欄の表示更新
+      // 現在のカテゴリデータ取得
+      const curCatData = state.categories[state.currentCategory] || { bibCount: 12, assignments: {} };
+
+      // タイトル更新
+      document.getElementById("currentCategoryTitle").textContent = `🎽 ${state.currentCategory}`;
+
+      // 枚数入力欄の更新
       const bibCountInput = document.getElementById("bibCountInput");
       if (document.activeElement !== bibCountInput) {
-        bibCountInput.value = state.bibCount || 12;
+        bibCountInput.value = curCatData.bibCount || 12;
       }
+
+      // カテゴリタブのレンダリング
+      const categoryTabsEl = document.getElementById("categoryTabs");
+      categoryTabsEl.innerHTML = "";
+      Object.keys(state.categories).forEach(catName => {
+        const isCurrent = catName === state.currentCategory;
+        const tabBtn = document.createElement("button");
+        tabBtn.className = `px-3.5 py-1.5 rounded-lg text-xs font-bold transition shadow-sm ${
+          isCurrent 
+            ? "bg-indigo-600 text-white shadow" 
+            : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+        }`;
+        tabBtn.textContent = catName;
+        tabBtn.onclick = () => switchCategory(catName);
+        categoryTabsEl.appendChild(tabBtn);
+      });
 
       // メンバー表示
       const memberListEl = document.getElementById("memberList");
       memberListEl.innerHTML = "";
       (state.members || []).forEach(m => {
+        // 現在のカテゴリ内での割り当てチェック
         let assignedBibNum = null;
-        if (state.assignments) {
-          for (const [bib, member] of Object.entries(state.assignments)) {
+        if (curCatData.assignments) {
+          for (const [bib, member] of Object.entries(curCatData.assignments)) {
             if (member === m) {
               assignedBibNum = bib;
               break;
@@ -172,12 +216,12 @@
 
         const nameBtn = document.createElement("button");
         nameBtn.className = `${isSelected ? 'text-indigo-600' : assignedBibNum ? 'text-slate-500 font-medium' : 'text-slate-800'}`;
-        nameBtn.textContent = m + (assignedBibNum ? ` (No.${assignedBibNum})` : "");
+        nameBtn.textContent = m + (assignedBibNum ? ` (${state.currentCategory}: No.${assignedBibNum})` : "");
         nameBtn.onclick = () => selectMember(m);
 
         wrapper.appendChild(nameBtn);
 
-        // 割当中の場合はメンバー欄からも個別解除
+        // 割当中の場合は個別解除ボタン
         if (assignedBibNum) {
           const unassignMemberBtn = document.createElement("button");
           unassignMemberBtn.className = "text-red-500 hover:text-red-700 ml-1 font-bold";
@@ -212,11 +256,11 @@
       // ビブス枠表示 (1〜bibCount番)
       const bibGridEl = document.getElementById("bibGrid");
       bibGridEl.innerHTML = "";
-      const totalBibs = state.bibCount || 12;
+      const totalBibs = curCatData.bibCount || 12;
 
       for (let i = 1; i <= totalBibs; i++) {
         const key = String(i);
-        const assignedName = state.assignments ? state.assignments[key] : null;
+        const assignedName = curCatData.assignments ? curCatData.assignments[key] : null;
         const card = document.createElement("div");
         card.className = `border-2 rounded-xl p-3 text-center flex flex-col justify-between min-h-[100px] transition ${
           assignedName 
@@ -225,7 +269,6 @@
         }`;
         
         if (assignedName) {
-          // 割り当て済み枠（個別解除ボタンを配置）
           card.innerHTML = `
             <div class="flex justify-between items-center">
               <span class="text-xs font-bold text-indigo-400">No.</span>
@@ -239,7 +282,6 @@
             </button>
           `;
         } else {
-          // 未割り当て枠
           card.innerHTML = `
             <div class="flex justify-between items-center">
               <span class="text-xs font-bold text-slate-400">No.</span>
@@ -255,6 +297,45 @@
 
         bibGridEl.appendChild(card);
       }
+    }
+
+    function switchCategory(catName) {
+      const nextState = JSON.parse(JSON.stringify(state));
+      nextState.currentCategory = catName;
+      selectedMember = null;
+      saveState(nextState, true);
+    }
+
+    function addCategory() {
+      const input = document.getElementById("categoryNameInput");
+      const name = input.value.trim();
+      if (!name) return;
+
+      const nextState = JSON.parse(JSON.stringify(state));
+      if (nextState.categories[name]) {
+        alert("すでに存在する種類名です");
+        return;
+      }
+
+      nextState.categories[name] = { bibCount: 12, assignments: {} };
+      nextState.currentCategory = name;
+      input.value = "";
+      saveState(nextState, true);
+    }
+
+    function deleteCurrentCategory() {
+      const keys = Object.keys(state.categories);
+      if (keys.length <= 1) {
+        alert("最後の1つの種類は削除できません");
+        return;
+      }
+      if (!confirm(`「${state.currentCategory}」のカテゴリを削除しますか？`)) return;
+
+      const nextState = JSON.parse(JSON.stringify(state));
+      delete nextState.categories[state.currentCategory];
+      nextState.currentCategory = Object.keys(nextState.categories)[0];
+      selectedMember = null;
+      saveState(nextState, true);
     }
 
     function selectMember(name) {
@@ -287,13 +368,16 @@
         nextState.members[index] = trimmed;
       }
 
-      if (nextState.assignments) {
-        Object.keys(nextState.assignments).forEach(k => {
-          if (nextState.assignments[k] === oldName) {
-            nextState.assignments[k] = trimmed;
-          }
-        });
-      }
+      // 全カテゴリの割り当て名も置換
+      Object.values(nextState.categories).forEach(cat => {
+        if (cat.assignments) {
+          Object.keys(cat.assignments).forEach(k => {
+            if (cat.assignments[k] === oldName) {
+              cat.assignments[k] = trimmed;
+            }
+          });
+        }
+      });
 
       if (selectedMember === oldName) selectedMember = trimmed;
       saveState(nextState, true);
@@ -305,13 +389,16 @@
       const nextState = JSON.parse(JSON.stringify(state));
       nextState.members = (nextState.members || []).filter(m => m !== name);
 
-      if (nextState.assignments) {
-        Object.keys(nextState.assignments).forEach(k => {
-          if (nextState.assignments[k] === name) {
-            delete nextState.assignments[k];
-          }
-        });
-      }
+      // 全カテゴリの割り当てから削除
+      Object.values(nextState.categories).forEach(cat => {
+        if (cat.assignments) {
+          Object.keys(cat.assignments).forEach(k => {
+            if (cat.assignments[k] === name) {
+              delete cat.assignments[k];
+            }
+          });
+        }
+      });
 
       if (selectedMember === name) selectedMember = null;
       saveState(nextState, true);
@@ -324,31 +411,32 @@
       }
       
       const nextState = JSON.parse(JSON.stringify(state));
-      if (!nextState.assignments) nextState.assignments = {};
+      const curCat = nextState.categories[nextState.currentCategory];
+      if (!curCat.assignments) curCat.assignments = {};
       
-      // 他のビブスから外す
-      Object.keys(nextState.assignments).forEach(k => {
-        if (nextState.assignments[k] === selectedMember) delete nextState.assignments[k];
+      // 同じカテゴリ内で、このメンバーがすでに他のビブスに割り当てられていれば外す
+      Object.keys(curCat.assignments).forEach(k => {
+        if (curCat.assignments[k] === selectedMember) delete curCat.assignments[k];
       });
 
-      nextState.assignments[String(bibNum)] = selectedMember;
+      curCat.assignments[String(bibNum)] = selectedMember;
       selectedMember = null;
       saveState(nextState, true);
     }
 
     function unassignBib(bibNum) {
-      if (state.assignments) {
-        const nextState = JSON.parse(JSON.stringify(state));
-        const key = String(bibNum);
-        delete nextState.assignments[key];
+      const nextState = JSON.parse(JSON.stringify(state));
+      const curCat = nextState.categories[nextState.currentCategory];
+      if (curCat.assignments) {
+        delete curCat.assignments[String(bibNum)];
         saveState(nextState, true);
       }
     }
 
     function resetBibs() {
-      if (confirm("すべてのビブス割り当てをリセットしますか？")) {
+      if (confirm(`「${state.currentCategory}」のすべてのビブス割り当てをリセットしますか？`)) {
         const nextState = JSON.parse(JSON.stringify(state));
-        nextState.assignments = {};
+        nextState.categories[nextState.currentCategory].assignments = {};
         saveState(nextState, true);
       }
     }
@@ -362,13 +450,14 @@
       }
 
       const nextState = JSON.parse(JSON.stringify(state));
-      nextState.bibCount = count;
+      const curCat = nextState.categories[nextState.currentCategory];
+      curCat.bibCount = count;
       
       // 枚数を減らした場合、その範囲外の割り当てを解除
-      if (nextState.assignments) {
-        Object.keys(nextState.assignments).forEach(k => {
+      if (curCat.assignments) {
+        Object.keys(curCat.assignments).forEach(k => {
           if (parseInt(k, 10) > count) {
-            delete nextState.assignments[k];
+            delete curCat.assignments[k];
           }
         });
       }
