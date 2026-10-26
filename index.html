@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>リアルタイム ビブス・ユニフォーム管理アプリ</title>
+  <title>リアルタイム ビブス管理アプリ</title>
   <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
   <!-- Firebase SDK -->
@@ -16,7 +16,7 @@
     <!-- ヘッダー -->
     <header class="flex flex-col sm:flex-row justify-between items-center bg-white p-4 rounded-xl shadow-sm gap-4">
       <div>
-        <h1 class="text-2xl font-bold text-slate-800">🎽 ビブス・ユニフォーム管理アプリ</h1>
+        <h1 class="text-2xl font-bold text-slate-800">🎽 ビブス管理アプリ</h1>
         <p class="text-xs text-slate-500 mt-1">リアルタイムで割り当て状況が同期されます</p>
       </div>
       <div class="flex items-center gap-2 w-full sm:w-auto">
@@ -110,16 +110,38 @@
       currentCategory: "FPチーム"
     };
 
+    let isInitialLoad = true;
+
     // リアルタイム受信設定
     docRef.onSnapshot((doc) => {
       if (doc.exists) {
         const data = doc.data();
-        state = {
-          members: data.members || ["選手A", "選手B", "選手C", "選手D"],
-          categories: data.categories || { "FPチーム": { bibCount: 12, assignments: {} } },
-          currentCategory: data.currentCategory || Object.keys(data.categories || { "FPチーム": {} })[0]
-        };
-        // 万が一現在のカテゴリが存在しなくなっていた場合のフォールバック
+        
+        // 初回ロード時以外は、現在操作中の categories や currentCategory が予期せず消えないようにマージして受け取る
+        if (isInitialLoad) {
+          state = {
+            members: data.members || ["選手A", "選手B", "選手C", "選手D"],
+            categories: data.categories || { "FPチーム": { bibCount: 12, assignments: {} } },
+            currentCategory: data.currentCategory || "FPチーム"
+          };
+          isInitialLoad = false;
+        } else {
+          // サーバーからの最新データのうち、メンバーとカテゴリ情報を安全に反映
+          if (data.members) state.members = data.members;
+          if (data.categories) {
+            // 各カテゴリのデータを保持しつつ更新
+            Object.keys(data.categories).forEach(cat => {
+              if (!state.categories[cat]) {
+                state.categories[cat] = data.categories[cat];
+              } else {
+                // 既存カテゴリのassignmentsやbibCountを更新（他のタブのデータが消えないようにする）
+                state.categories[cat].bibCount = data.categories[cat].bibCount;
+                state.categories[cat].assignments = data.categories[cat].assignments || {};
+              }
+            });
+          }
+        }
+
         if (!state.categories[state.currentCategory]) {
           state.currentCategory = Object.keys(state.categories)[0];
         }
@@ -134,6 +156,7 @@
         historyStack.push(JSON.parse(JSON.stringify(state)));
         if (historyStack.length > 20) historyStack.shift();
       }
+      state = newState;
       docRef.set(newState);
       updateUndoButtonState();
     }
@@ -141,8 +164,7 @@
     function undo() {
       if (historyStack.length === 0) return;
       const previousState = historyStack.pop();
-      docRef.set(previousState);
-      updateUndoButtonState();
+      saveState(previousState, false);
     }
 
     function updateUndoButtonState() {
@@ -160,13 +182,10 @@
     function render() {
       updateUndoButtonState();
 
-      // 現在のカテゴリデータ取得
       const curCatData = state.categories[state.currentCategory] || { bibCount: 12, assignments: {} };
 
-      // タイトル更新
       document.getElementById("currentCategoryTitle").textContent = `🎽 ${state.currentCategory}`;
 
-      // 枚数入力欄の更新
       const bibCountInput = document.getElementById("bibCountInput");
       if (document.activeElement !== bibCountInput) {
         bibCountInput.value = curCatData.bibCount || 12;
@@ -192,7 +211,6 @@
       const memberListEl = document.getElementById("memberList");
       memberListEl.innerHTML = "";
       (state.members || []).forEach(m => {
-        // 現在のカテゴリ内での割り当てチェック
         let assignedBibNum = null;
         if (curCatData.assignments) {
           for (const [bib, member] of Object.entries(curCatData.assignments)) {
@@ -221,7 +239,6 @@
 
         wrapper.appendChild(nameBtn);
 
-        // 割当中の場合は個別解除ボタン
         if (assignedBibNum) {
           const unassignMemberBtn = document.createElement("button");
           unassignMemberBtn.className = "text-red-500 hover:text-red-700 ml-1 font-bold";
@@ -234,7 +251,6 @@
           wrapper.appendChild(unassignMemberBtn);
         }
 
-        // 編集ボタン
         const editBtn = document.createElement("button");
         editBtn.className = "text-slate-400 hover:text-indigo-600 ml-1";
         editBtn.innerHTML = "✏️";
@@ -242,7 +258,6 @@
         editBtn.onclick = (e) => { e.stopPropagation(); editMember(m); };
         wrapper.appendChild(editBtn);
 
-        // 削除ボタン
         const deleteBtn = document.createElement("button");
         deleteBtn.className = "text-slate-400 hover:text-red-600 ml-0.5";
         deleteBtn.innerHTML = "🗑️";
@@ -253,7 +268,7 @@
         memberListEl.appendChild(wrapper);
       });
 
-      // ビブス枠表示 (1〜bibCount番)
+      // ビブス枠表示
       const bibGridEl = document.getElementById("bibGrid");
       bibGridEl.innerHTML = "";
       const totalBibs = curCatData.bibCount || 12;
@@ -368,7 +383,6 @@
         nextState.members[index] = trimmed;
       }
 
-      // 全カテゴリの割り当て名も置換
       Object.values(nextState.categories).forEach(cat => {
         if (cat.assignments) {
           Object.keys(cat.assignments).forEach(k => {
@@ -389,7 +403,6 @@
       const nextState = JSON.parse(JSON.stringify(state));
       nextState.members = (nextState.members || []).filter(m => m !== name);
 
-      // 全カテゴリの割り当てから削除
       Object.values(nextState.categories).forEach(cat => {
         if (cat.assignments) {
           Object.keys(cat.assignments).forEach(k => {
@@ -414,7 +427,6 @@
       const curCat = nextState.categories[nextState.currentCategory];
       if (!curCat.assignments) curCat.assignments = {};
       
-      // 同じカテゴリ内で、このメンバーがすでに他のビブスに割り当てられていれば外す
       Object.keys(curCat.assignments).forEach(k => {
         if (curCat.assignments[k] === selectedMember) delete curCat.assignments[k];
       });
@@ -453,7 +465,6 @@
       const curCat = nextState.categories[nextState.currentCategory];
       curCat.bibCount = count;
       
-      // 枚数を減らした場合、その範囲外の割り当てを解除
       if (curCat.assignments) {
         Object.keys(curCat.assignments).forEach(k => {
           if (parseInt(k, 10) > count) {
